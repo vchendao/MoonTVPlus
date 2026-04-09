@@ -6,6 +6,7 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 
 import { getConfig } from '@/lib/config';
+import { listEnabledSourceScripts } from '@/lib/source-script';
 
 import { DanmakuCacheCleanup } from '../components/DanmakuCacheCleanup';
 import { DownloadBubble } from '../components/DownloadBubble';
@@ -84,12 +85,14 @@ export default async function RootLayout({
   let aiEnableHomepageEntry = false;
   let aiEnableVideoCardEntry = false;
   let aiEnablePlayPageEntry = false;
+  let aiEnableComments = false;
   let aiDefaultMessageNoVideo = '';
   let aiDefaultMessageWithVideo = '';
   let enableMovieRequest = true;
   let webLiveEnabled = false;
   let customAdFilterVersion = 0;
   let tuneHubEnabled = false;
+  let advancedRecommendationEnabled = false;
   let customCategories = [] as {
     name: string;
     type: 'movie' | 'tv';
@@ -133,6 +136,7 @@ export default async function RootLayout({
     aiEnableHomepageEntry = config.AIConfig?.EnableHomepageEntry || false;
     aiEnableVideoCardEntry = config.AIConfig?.EnableVideoCardEntry || false;
     aiEnablePlayPageEntry = config.AIConfig?.EnablePlayPageEntry || false;
+    aiEnableComments = config.AIConfig?.EnableAIComments || false;
     aiDefaultMessageNoVideo = config.AIConfig?.DefaultMessageNoVideo || '';
     aiDefaultMessageWithVideo = config.AIConfig?.DefaultMessageWithVideo || '';
     // 求片功能配置
@@ -143,6 +147,9 @@ export default async function RootLayout({
     customAdFilterVersion = config.SiteConfig?.CustomAdFilterVersion || 0;
     // TuneHub音乐功能配置
     tuneHubEnabled = config.MusicConfig?.TuneHubEnabled || false;
+    // 高级推荐功能配置：存在已启用视频源脚本时显示
+    advancedRecommendationEnabled =
+      (await listEnabledSourceScripts()).length > 0;
     // 检查是否启用了 OpenList 功能
     openListEnabled = !!(
       config.OpenListConfig?.Enabled &&
@@ -198,10 +205,14 @@ export default async function RootLayout({
     AI_ENABLE_HOMEPAGE_ENTRY: aiEnableHomepageEntry,
     AI_ENABLE_VIDEOCARD_ENTRY: aiEnableVideoCardEntry,
     AI_ENABLE_PLAYPAGE_ENTRY: aiEnablePlayPageEntry,
+    AIConfig: {
+      EnableAIComments: aiEnableComments,
+    },
     AI_DEFAULT_MESSAGE_NO_VIDEO: aiDefaultMessageNoVideo,
     AI_DEFAULT_MESSAGE_WITH_VIDEO: aiDefaultMessageWithVideo,
     ENABLE_MOVIE_REQUEST: enableMovieRequest,
     WEB_LIVE_ENABLED: webLiveEnabled,
+    ADVANCED_RECOMMENDATION_ENABLED: advancedRecommendationEnabled,
     CUSTOM_AD_FILTER_VERSION: customAdFilterVersion,
     TUNEHUB_ENABLED: tuneHubEnabled,
     FESTIVE_EFFECT_ENABLED:

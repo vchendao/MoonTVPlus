@@ -21,7 +21,7 @@ import {
   saveFavorite,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
-import { processImageUrl } from '@/lib/utils';
+import { processImageUrl, base58Decode } from '@/lib/utils';
 import { useLongPress } from '@/hooks/useLongPress';
 
 import AIChatPanel from '@/components/AIChatPanel';
@@ -172,6 +172,14 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
   const actualQuery = query || '';
   const actualSearchType = type;
   const isDirectPlaySource = actualSource === 'directplay';
+  const directLinkUrl = useMemo(() => {
+    if (!isDirectPlaySource || !actualId) return '';
+    try {
+      return base58Decode(actualId);
+    } catch {
+      return '';
+    }
+  }, [isDirectPlaySource, actualId]);
   const displayYear = useMemo(() => {
     if (!actualYear) return '';
     const normalized = actualYear.trim();
@@ -938,6 +946,38 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
             </div>
           )}
 
+          {/* 竖向模式：顶部直链地址显示 */}
+          {orientation === 'vertical' && isDirectPlaySource && directLinkUrl && (
+            <div
+              className='absolute top-1 left-1 right-1 sm:top-2 sm:left-2 sm:right-2 pt-1 px-1 sm:pt-2 sm:px-2'
+              style={{
+                WebkitUserSelect: 'none',
+                userSelect: 'none',
+                WebkitTouchCallout: 'none',
+              } as React.CSSProperties}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                return false;
+              }}
+            >
+              <div
+                className='text-[9px] sm:text-[10px] text-yellow-400 line-clamp-2 break-all'
+                style={{
+                  WebkitUserSelect: 'none',
+                  userSelect: 'none',
+                  WebkitTouchCallout: 'none',
+                } as React.CSSProperties}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  return false;
+                }}
+                title={directLinkUrl}
+              >
+                {directLinkUrl}
+              </div>
+            </div>
+          )}
+
           {actualEpisodes && actualEpisodes > 1 && orientation === 'vertical' && (
             <div
               className='absolute top-1 right-1 sm:top-2 sm:right-2 flex flex-col gap-0.5 sm:gap-1.5'
@@ -1077,7 +1117,9 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
 
             return (
               <div
-                className='absolute bottom-2 right-2 opacity-0 transition-all duration-300 ease-in-out delay-75 sm:group-hover:opacity-100'
+                className={`absolute bottom-1 right-1 sm:bottom-2 sm:right-2 transition-all duration-300 ease-in-out delay-75 ${
+                  from === 'search' ? 'opacity-100' : 'opacity-0 sm:group-hover:opacity-100'
+                }`}
                 style={{
                   WebkitUserSelect: 'none',
                   userSelect: 'none',
@@ -1245,6 +1287,25 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
                     }}
                   >
                     第{currentEpisode}集 · 共{actualEpisodes}集
+                  </div>
+                )}
+
+                {/* 直链地址 */}
+                {isDirectPlaySource && directLinkUrl && (
+                  <div
+                    className='text-[10px] text-white/75 truncate'
+                    style={{
+                      WebkitUserSelect: 'none',
+                      userSelect: 'none',
+                      WebkitTouchCallout: 'none',
+                    } as React.CSSProperties}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      return false;
+                    }}
+                    title={directLinkUrl}
+                  >
+                    {directLinkUrl}
                   </div>
                 )}
               </div>
@@ -1485,6 +1546,7 @@ const VideoCard = forwardRef<VideoCardHandle, VideoCardProps>(function VideoCard
         sources={isAggregate && dynamicSourceNames ? Array.from(new Set(dynamicSourceNames)) : undefined}
         isAggregate={isAggregate}
         sourceName={cmsData ? undefined : source_name}
+        directLinkUrl={directLinkUrl || undefined}
         currentEpisode={currentEpisode}
         totalEpisodes={actualEpisodes}
         origin={origin}

@@ -4,13 +4,19 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
-import { searchFromApi } from '@/lib/downstream';
+import { getDetailFromApiV2 } from '@/lib/downstream';
 import { getProxyToken } from '@/lib/emby-token';
+import {
+  executeSavedSourceScript,
+  normalizeScriptDetailResult,
+  normalizeScriptSources,
+  parseScriptSourceValue,
+} from '@/lib/source-script';
 
 export const runtime = 'nodejs';
 
 /**
- * 根据 source 和 id 从搜索结果中精确匹配获取视频详情
+ * 根据 source 和 id 直接获取视频详情
  * 这个API专门用于play页面快速获取当前源的详情
  */
 export async function GET(request: NextRequest) {
@@ -22,11 +28,53 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get('id');
   const sourceCode = searchParams.get('source');
-  const title = searchParams.get('title'); // 用于搜索的标题
   const fileName = searchParams.get('fileName'); // 小雅源：用户点击的文件名
 
-  if (!id || !sourceCode || !title) {
+  if (!id || !sourceCode) {
     return NextResponse.json({ error: '缺少必要参数' }, { status: 400 });
+  }
+
+  const parsedScriptSource = parseScriptSourceValue(sourceCode);
+  if (parsedScriptSource) {
+    try {
+      const sourcesExecution = await executeSavedSourceScript({
+        key: parsedScriptSource.scriptKey,
+        hook: 'getSources',
+        payload: {},
+      });
+      const sources = normalizeScriptSources(sourcesExecution.result);
+      const sourceInfo =
+        sources.find((item) => item.id === parsedScriptSource.sourceId) || {
+          id: parsedScriptSource.sourceId,
+          name: parsedScriptSource.sourceId,
+        };
+
+      const detailExecution = await executeSavedSourceScript({
+        key: parsedScriptSource.scriptKey,
+        hook: 'detail',
+        payload: {
+          id,
+          sourceId: parsedScriptSource.sourceId,
+        },
+      });
+
+      const normalized = normalizeScriptDetailResult({
+        source: sourceCode,
+        scriptKey: parsedScriptSource.scriptKey,
+        scriptName: detailExecution.meta?.name || parsedScriptSource.scriptKey,
+        sourceId: parsedScriptSource.sourceId,
+        sourceName: sourceInfo.name,
+        detailId: id,
+        result: detailExecution.result,
+      });
+
+      return NextResponse.json(normalized);
+    } catch (error) {
+      return NextResponse.json(
+        { error: (error as Error).message },
+        { status: 500 }
+      );
+    }
   }
 
   // 特殊处理 emby 源（支持多源）
@@ -385,7 +433,11 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // 对于其他源，通过搜索API获取，然后精确匹配
+  if (!/^[\w-]+$/.test(id)) {
+    return NextResponse.json({ error: '无效的视频ID格式' }, { status: 400 });
+  }
+
+  // 对于其他采集源，直接按 id 获取详情。
   try {
     const apiSites = await getAvailableApiSites(authInfo.username);
     const apiSite = apiSites.find((site) => site.key === sourceCode);
@@ -394,26 +446,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '无效的API来源' }, { status: 400 });
     }
 
-    // 调用搜索API
-    const searchResults = await searchFromApi(apiSite, title.trim());
-
-    // 从搜索结果中精确匹配 source 和 id
-    const exactMatch = searchResults.find(
-      (item: any) =>
-        item.source?.toString() === sourceCode.toString() &&
-        item.id?.toString() === id.toString()
-    );
-
-    if (!exactMatch) {
-      return NextResponse.json(
-        { error: '未找到匹配的视频源' },
-        { status: 404 }
-      );
-    }
+    const result = await getDetailFromApiV2(apiSite, id);
 
     // 添加 proxyMode 到返回结果
     const resultWithProxy = {
-      ...exactMatch,
+      ...result,
       proxyMode: apiSite.proxyMode || false,
     };
 

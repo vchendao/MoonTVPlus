@@ -30,6 +30,11 @@ export interface AdminConfig {
     PansouUsername?: string;
     PansouPassword?: string;
     PansouKeywordBlocklist?: string;
+    // 磁链配置
+    MagnetProxy?: string;
+    MagnetMikanReverseProxy?: string;
+    MagnetDmhyReverseProxy?: string;
+    MagnetAcgripReverseProxy?: string;
     // 评论功能开关
     EnableComments: boolean;
     // 自定义去广告代码
@@ -96,6 +101,7 @@ export interface AdminConfig {
     from: 'config' | 'custom';
     channelNumber?: number;
     disabled?: boolean;
+    proxyMode?: 'full' | 'm3u8-only' | 'direct'; // 代理模式：full=全量代理，m3u8-only=仅代理m3u8，direct=直连
   }[];
   WebLiveConfig?: {
     key: string;
@@ -169,6 +175,7 @@ export interface AdminConfig {
     EnableHomepageEntry: boolean; // 首页入口开关
     EnableVideoCardEntry: boolean; // VideoCard入口开关
     EnablePlayPageEntry: boolean; // 播放页入口开关
+    EnableAIComments: boolean; // AI评论生成开关
     // 权限控制
     AllowRegularUsers: boolean; // 是否允许普通用户使用AI问片（关闭后仅站长和管理员可用）
     // 高级设置
