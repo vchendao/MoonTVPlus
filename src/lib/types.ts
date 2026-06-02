@@ -1,4 +1,6 @@
 import { AdminConfig } from './admin.types';
+import { MangaReadRecord, MangaShelfItem } from './manga.types';
+import { BookReadRecord, BookShelfItem } from './book.types';
 
 // 播放记录数据结构
 export interface PlayRecord {
@@ -40,6 +42,7 @@ export interface IStorage {
   ): Promise<void>;
   getAllPlayRecords(userName: string): Promise<{ [key: string]: PlayRecord }>;
   deletePlayRecord(userName: string, key: string): Promise<void>;
+  deletePlayRecords(userName: string, keys: string[]): Promise<void>;
   // 清理超出限制的旧播放记录
   cleanupOldPlayRecords(userName: string): Promise<void>;
   // 迁移播放记录
@@ -56,7 +59,10 @@ export interface IStorage {
   // 音乐播放记录相关
   getMusicPlayRecord(userName: string, key: string): Promise<any | null>;
   setMusicPlayRecord(userName: string, key: string, record: any): Promise<void>;
-  batchSetMusicPlayRecords(userName: string, records: { key: string; record: any }[]): Promise<void>;
+  batchSetMusicPlayRecords(
+    userName: string,
+    records: { key: string; record: any }[]
+  ): Promise<void>;
   getAllMusicPlayRecords(userName: string): Promise<{ [key: string]: any }>;
   deleteMusicPlayRecord(userName: string, key: string): Promise<void>;
   clearAllMusicPlayRecords(userName: string): Promise<void>;
@@ -74,6 +80,60 @@ export interface IStorage {
   getSearchHistory(userName: string): Promise<string[]>;
   addSearchHistory(userName: string, keyword: string): Promise<void>;
   deleteSearchHistory(userName: string, keyword?: string): Promise<void>;
+
+  // 漫画书架相关
+  getMangaShelf(userName: string, key: string): Promise<MangaShelfItem | null>;
+  setMangaShelf(
+    userName: string,
+    key: string,
+    item: MangaShelfItem
+  ): Promise<void>;
+  getAllMangaShelf(
+    userName: string
+  ): Promise<{ [key: string]: MangaShelfItem }>;
+  deleteMangaShelf(userName: string, key: string): Promise<void>;
+
+  // 漫画阅读历史相关
+  getMangaReadRecord(
+    userName: string,
+    key: string
+  ): Promise<MangaReadRecord | null>;
+  setMangaReadRecord(
+    userName: string,
+    key: string,
+    record: MangaReadRecord
+  ): Promise<void>;
+  getAllMangaReadRecords(
+    userName: string
+  ): Promise<{ [key: string]: MangaReadRecord }>;
+  deleteMangaReadRecord(userName: string, key: string): Promise<void>;
+  cleanupOldMangaReadRecords?(userName: string): Promise<void>;
+
+  // 电子书书架相关
+  getBookShelf(userName: string, key: string): Promise<BookShelfItem | null>;
+  setBookShelf(
+    userName: string,
+    key: string,
+    item: BookShelfItem
+  ): Promise<void>;
+  getAllBookShelf(userName: string): Promise<{ [key: string]: BookShelfItem }>;
+  deleteBookShelf(userName: string, key: string): Promise<void>;
+
+  // 电子书阅读历史相关
+  getBookReadRecord(
+    userName: string,
+    key: string
+  ): Promise<BookReadRecord | null>;
+  setBookReadRecord(
+    userName: string,
+    key: string,
+    record: BookReadRecord
+  ): Promise<void>;
+  getAllBookReadRecords(
+    userName: string
+  ): Promise<{ [key: string]: BookReadRecord }>;
+  deleteBookReadRecord(userName: string, key: string): Promise<void>;
+  cleanupOldBookReadRecords?(userName: string): Promise<void>;
 
   // 用户列表
   getAllUsers(): Promise<string[]>;
@@ -118,7 +178,10 @@ export interface IStorage {
   // 通知相关
   getNotifications(userName: string): Promise<Notification[]>;
   addNotification(userName: string, notification: Notification): Promise<void>;
-  markNotificationAsRead(userName: string, notificationId: string): Promise<void>;
+  markNotificationAsRead(
+    userName: string,
+    notificationId: string
+  ): Promise<void>;
   deleteNotification(userName: string, notificationId: string): Promise<void>;
   clearAllNotifications(userName: string): Promise<void>;
   getUnreadNotificationCount(userName: string): Promise<number>;
@@ -128,13 +191,19 @@ export interface IStorage {
   setLastFavoriteCheckTime(userName: string, timestamp: number): Promise<void>;
 
   // 求片冷却时间
-  updateLastMovieRequestTime?(userName: string, timestamp: number): Promise<void>;
+  updateLastMovieRequestTime?(
+    userName: string,
+    timestamp: number
+  ): Promise<void>;
 
   // 求片相关
   getAllMovieRequests(): Promise<MovieRequest[]>;
   getMovieRequest(requestId: string): Promise<MovieRequest | null>;
   createMovieRequest(request: MovieRequest): Promise<void>;
-  updateMovieRequest(requestId: string, updates: Partial<MovieRequest>): Promise<void>;
+  updateMovieRequest(
+    requestId: string,
+    updates: Partial<MovieRequest>
+  ): Promise<void>;
   deleteMovieRequest(requestId: string): Promise<void>;
   getUserMovieRequests(userName: string): Promise<string[]>;
   addUserMovieRequest(userName: string, requestId: string): Promise<void>;
@@ -160,7 +229,10 @@ export interface IStorage {
   getUserEmail?(userName: string): Promise<string | null>;
   setUserEmail?(userName: string, email: string): Promise<void>;
   getEmailNotificationPreference?(userName: string): Promise<boolean>;
-  setEmailNotificationPreference?(userName: string, enabled: boolean): Promise<void>;
+  setEmailNotificationPreference?(
+    userName: string,
+    enabled: boolean
+  ): Promise<void>;
 
   // TVBox订阅token相关
   getTvboxSubscribeToken?(userName: string): Promise<string | null>;
@@ -239,11 +311,13 @@ export interface EpisodeFilterRule {
 // 集数过滤配置数据结构
 export interface EpisodeFilterConfig {
   rules: EpisodeFilterRule[]; // 过滤规则列表
+  reverseMode?: boolean; // 反向模式：开启后仅显示符合规则的集数
 }
 
 // 通知类型枚举
 export type NotificationType =
   | 'favorite_update' // 收藏更新
+  | 'manga_update' // 漫画更新
   | 'system' // 系统通知
   | 'announcement' // 公告
   | 'movie_request' // 新求片通知（给管理员）

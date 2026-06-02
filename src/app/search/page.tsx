@@ -38,12 +38,20 @@ import CapsuleSwitch from '@/components/CapsuleSwitch';
 import ImageViewer from '@/components/ImageViewer';
 import PageLayout from '@/components/PageLayout';
 import PansouSearch from '@/components/PansouSearch';
+import ProxyImage from '@/components/ProxyImage';
 import SearchResultFilter, {
   SearchFilterCategory,
 } from '@/components/SearchResultFilter';
 import SearchSuggestions from '@/components/SearchSuggestions';
 import VideoCard, { VideoCardHandle } from '@/components/VideoCard';
 import VirtualScrollableGrid from '@/components/VirtualScrollableGrid';
+
+type SearchCachePayload = {
+  status: 'complete' | 'partial';
+  results: SearchResult[];
+  query: string;
+  updatedAt: number;
+};
 
 function SearchPageClient() {
   // 搜索历史
@@ -62,6 +70,8 @@ function SearchPageClient() {
   const [userRole, setUserRole] = useState<'owner' | 'admin' | 'user' | null>(
     null
   );
+  const [netdiskSearchEnabled, setNetdiskSearchEnabled] = useState(false);
+  const [magnetSearchEnabled, setMagnetSearchEnabled] = useState(false);
   // 繁体转简体转换器
   const converterRef = useRef<((text: string) => string) | null>(null);
   // 转换器是否已初始化
@@ -69,6 +79,7 @@ function SearchPageClient() {
 
   const router = useRouter();
   const searchParams = useSearchParams();
+  const submittedSearchQuery = searchParams.get('q')?.trim() || '';
   const currentQueryRef = useRef<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -103,14 +114,17 @@ function SearchPageClient() {
     return `search_cache_${query.trim()}`;
   };
 
-  // 从 sessionStorage 获取缓存的搜索结果
+  // 从 sessionStorage 获取完整缓存的搜索结果（partial 只给播放页快速启动使用）
   const getCachedResults = (query: string): SearchResult[] | null => {
     if (typeof window === 'undefined') return null;
     try {
       const cacheKey = getCacheKey(query);
       const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        return JSON.parse(cached);
+      if (!cached) return null;
+
+      const parsed = JSON.parse(cached) as SearchCachePayload;
+      if (parsed?.status === 'complete' && Array.isArray(parsed.results)) {
+        return parsed.results;
       }
     } catch (error) {
       console.error('Failed to get cached results:', error);
@@ -119,13 +133,33 @@ function SearchPageClient() {
   };
 
   // 保存搜索结果到 sessionStorage
-  const setCachedResults = (query: string, results: SearchResult[]) => {
+  const setCachedResults = (
+    query: string,
+    results: SearchResult[],
+    status: SearchCachePayload['status'] = 'complete'
+  ) => {
     if (typeof window === 'undefined') return;
     try {
       const cacheKey = getCacheKey(query);
-      sessionStorage.setItem(cacheKey, JSON.stringify(results));
+      const payload: SearchCachePayload = {
+        status,
+        results,
+        query: query.trim(),
+        updatedAt: Date.now(),
+      };
+      sessionStorage.setItem(cacheKey, JSON.stringify(payload));
     } catch (error) {
       console.error('Failed to cache results:', error);
+    }
+  };
+
+  const savePartialCacheForPlayback = () => {
+    const query = currentQueryRef.current.trim();
+    if (!query || !eventSourceRef.current || !isLoading) return;
+
+    const snapshot = searchResults.concat(pendingResultsRef.current);
+    if (snapshot.length > 20) {
+      setCachedResults(query, snapshot, 'partial');
     }
   };
 
@@ -354,19 +388,21 @@ function SearchPageClient() {
 
     return normalizedTitle.includes(normalizedQuery);
   };
+
+  const allExactSearchResults = useMemo(() => {
+    if (!exactSearch) return searchResults;
+
+    return searchResults.filter((item) =>
+      titleContainsQuery(item.title, submittedSearchQuery)
+    );
+  }, [searchResults, submittedSearchQuery, exactSearch]);
+
   // 聚合后的结果（按标题和年份分组）
   const aggregatedResults = useMemo(() => {
-    // 首先应用精确搜索过滤
-    const filteredResults = exactSearch
-      ? searchResults.filter((item) =>
-          titleContainsQuery(item.title, currentQueryRef.current)
-        )
-      : searchResults;
-
     //===== 阶段1：按 normalizedTitle-type 初步分组 =====
     const preliminaryMap = new Map<string, SearchResult[]>();
 
-    filteredResults.forEach((item) => {
+    allExactSearchResults.forEach((item) => {
       const normalizedTitle = normalizeTitle(item.title);
       const type = getType(item);
       const preliminaryKey = `${normalizedTitle}-${type}`;
@@ -427,7 +463,7 @@ function SearchPageClient() {
     return keyOrder.map(
       (key) => [key, finalMap.get(key)!] as [string, SearchResult[]]
     );
-  }, [searchResults, exactSearch]);
+  }, [allExactSearchResults]);
 
   // 当聚合结果变化时，如果某个聚合已存在，则调用其卡片 ref 的 set 方法增量更新
   useEffect(() => {
@@ -640,14 +676,7 @@ function SearchPageClient() {
   const filteredAllResults = useMemo(() => {
     const { source, title, year, yearOrder } = filterAll;
 
-    // 首先应用精确搜索过滤
-    const exactSearchFiltered = exactSearch
-      ? searchResults.filter((item) =>
-          titleContainsQuery(item.title, currentQueryRef.current)
-        )
-      : searchResults;
-
-    const filtered = exactSearchFiltered.filter((item) => {
+    const filtered = allExactSearchResults.filter((item) => {
       if (source !== 'all' && item.source !== source) return false;
       if (title !== 'all' && item.title !== title) return false;
       if (year !== 'all' && item.year !== year) return false;
@@ -676,7 +705,7 @@ function SearchPageClient() {
         ? a.title.localeCompare(b.title)
         : b.title.localeCompare(a.title);
     });
-  }, [searchResults, filterAll, searchQuery, exactSearch]);
+  }, [allExactSearchResults, filterAll, searchQuery]);
 
   // 聚合：应用筛选与排序
   const filteredAggResults = useMemo(() => {
@@ -731,6 +760,30 @@ function SearchPageClient() {
     resultDisplayMode,
     filteredAggResults.length,
     filteredAllResults.length,
+  ]);
+
+  const resultCountMeta = useMemo(() => {
+    const isAggregateView = viewMode === 'agg';
+    const visibleCount = isAggregateView
+      ? filteredAggResults.length
+      : filteredAllResults.length;
+    const totalCount = isAggregateView
+      ? aggregatedResults.length
+      : allExactSearchResults.length;
+
+    return {
+      visibleCount,
+      totalCount,
+      isFiltered: visibleCount !== totalCount,
+      modeLabel: isAggregateView ? '聚合结果' : '搜索结果',
+      unit: isAggregateView ? '组' : '条',
+    };
+  }, [
+    viewMode,
+    filteredAggResults.length,
+    filteredAllResults.length,
+    aggregatedResults.length,
+    allExactSearchResults.length,
   ]);
 
   useEffect(() => {
@@ -824,14 +877,16 @@ function SearchPageClient() {
       <button
         key={item.key}
         type='button'
-        onClick={() => router.push(itemUrl)}
+        onClick={() => {
+          savePartialCacheForPlayback();
+          router.push(itemUrl);
+        }}
         className='group w-full rounded-2xl border border-gray-200/80 bg-white/90 p-3 text-left shadow-sm transition-all hover:border-green-300 hover:shadow-md dark:border-gray-700 dark:bg-gray-900/70 dark:hover:border-green-700'
       >
         <div className='flex items-start gap-4'>
           <div className='relative h-32 w-24 shrink-0 overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800'>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={processImageUrl(item.poster)}
+            <ProxyImage
+              originalSrc={item.poster}
               alt={item.title}
               className='h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]'
               loading='lazy'
@@ -940,40 +995,15 @@ function SearchPageClient() {
   }, [activeTab]);
 
   useEffect(() => {
-    // 从 URL 读取搜索类型参数
-    const typeParam = searchParams.get('type');
-    const query = searchParams.get('q');
-
-    if (typeParam === 'pansou' || typeParam === 'acg') {
-      setActiveTab(typeParam);
-
-      // 如果有搜索关键词且显示结果，触发对应的搜索
-      if (query && query.trim()) {
-        setSearchQuery(query);
-        setShowResults(true);
-
-        // 延迟触发搜索，确保组件已经切换到正确的标签页
-        setTimeout(() => {
-          if (typeParam === 'pansou') {
-            setTriggerPansouSearch((prev) => !prev);
-          } else if (typeParam === 'acg') {
-            setTriggerAcgSearch((prev) => !prev);
-          }
-        }, 100);
-      }
-    } else if (typeParam === 'video') {
-      setActiveTab('video');
-    } else if (!typeParam && query) {
-      // 如果没有 type 参数但有查询，默认为 video
-      setActiveTab('video');
-    }
-
-    // 无搜索参数时聚焦搜索框
-    !searchParams.get('q') && document.getElementById('searchInput')?.focus();
-
     // 获取用户权限
     const authInfo = getAuthInfoFromBrowserCookie();
     setUserRole(authInfo?.role || null);
+    setNetdiskSearchEnabled(
+      !!(window as any).RUNTIME_CONFIG?.NETDISK_SEARCH_ENABLED
+    );
+    setMagnetSearchEnabled(
+      !!(window as any).RUNTIME_CONFIG?.MAGNET_SEARCH_ENABLED
+    );
 
     // 初始化繁体转简体转换器
     if (typeof window !== 'undefined') {
@@ -1063,6 +1093,31 @@ function SearchPageClient() {
       document.body.removeEventListener('scroll', handleScroll);
     };
   }, []);
+
+  useEffect(() => {
+    const typeParam = searchParams.get('type');
+    const query = searchParams.get('q');
+
+    if (typeParam === 'pansou') {
+      if (netdiskSearchEnabled) {
+        setActiveTab('pansou');
+      } else {
+        setActiveTab('video');
+      }
+    } else if (typeParam === 'acg') {
+      if (magnetSearchEnabled) {
+        setActiveTab('acg');
+      } else {
+        setActiveTab('video');
+      }
+    } else {
+      setActiveTab('video');
+    }
+
+    if (!query) {
+      document.getElementById('searchInput')?.focus();
+    }
+  }, [searchParams, netdiskSearchEnabled, magnetSearchEnabled]);
 
   useEffect(() => {
     // 等待转换器初始化完成
@@ -1319,6 +1374,26 @@ function SearchPageClient() {
     }
   }, [searchParams, forceRefresh, converterReady]);
 
+  useEffect(() => {
+    const typeParam = searchParams.get('type');
+    const query = searchParams.get('q');
+    if (!query || !query.trim()) return;
+
+    if (typeParam === 'pansou' && netdiskSearchEnabled) {
+      setSearchQuery(query);
+      setShowResults(true);
+      setTimeout(() => {
+        setTriggerPansouSearch((prev) => !prev);
+      }, 100);
+    } else if (typeParam === 'acg' && magnetSearchEnabled) {
+      setSearchQuery(query);
+      setShowResults(true);
+      setTimeout(() => {
+        setTriggerAcgSearch((prev) => !prev);
+      }, 100);
+    }
+  }, [searchParams, netdiskSearchEnabled, magnetSearchEnabled]);
+
   // 组件卸载时，关闭可能存在的连接
   useEffect(() => {
     return () => {
@@ -1522,8 +1597,9 @@ function SearchPageClient() {
                   setSearchQuery(trimmed);
                   setShowResults(true);
                   setShowSuggestions(false);
-
-                  router.push(`/search?q=${encodeURIComponent(trimmed)}`);
+                  router.push(
+                    `/search?q=${encodeURIComponent(trimmed)}&type=${activeTab}`
+                  );
                 }}
               />
             </div>
@@ -1538,13 +1614,16 @@ function SearchPageClient() {
                   value: 'video',
                   icon: <Film size={16} />,
                 },
-                {
-                  label: '网盘搜索',
-                  value: 'pansou',
-                  icon: <HardDrive size={16} />,
-                },
-                // 仅管理员和站长显示 ACG 磁力搜索
-                ...(userRole === 'admin' || userRole === 'owner'
+                ...(netdiskSearchEnabled
+                  ? [
+                      {
+                        label: '网盘搜索',
+                        value: 'pansou' as const,
+                        icon: <HardDrive size={16} />,
+                      },
+                    ]
+                  : []),
+                ...(magnetSearchEnabled
                   ? [
                       {
                         label: '动漫磁力',
@@ -1570,28 +1649,44 @@ function SearchPageClient() {
                 <>
                   {/* 影视搜索结果 */}
                   {/* 标题 */}
-                  <div className='mb-4 flex items-center justify-between'>
-                    <h2 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
-                      搜索结果
-                      {isFromCache ? (
-                        <span className='ml-2 rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-600 dark:bg-green-900/30 dark:text-green-400'>
-                          缓存
+                  <div className='mb-4 flex items-start justify-between gap-4'>
+                    <div className='min-w-0'>
+                      <h2 className='text-xl font-bold text-gray-800 dark:text-gray-200'>
+                        搜索结果
+                        {isFromCache ? (
+                          <span className='ml-2 rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-600 dark:bg-green-900/30 dark:text-green-400'>
+                            缓存
+                          </span>
+                        ) : (
+                          <>
+                            {totalSources > 0 && useFluidSearch && (
+                              <span className='ml-2 text-sm font-normal text-gray-500 dark:text-gray-400'>
+                                源 {completedSources}/{totalSources}
+                              </span>
+                            )}
+                            {isLoading && useFluidSearch && (
+                              <span className='ml-2 inline-block align-middle'>
+                                <span className='inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-green-500'></span>
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </h2>
+                      <div className='mt-2 flex flex-wrap items-center gap-2 text-xs'>
+                        <span className='inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200'>
+                          {resultCountMeta.modeLabel}{' '}
+                          {resultCountMeta.visibleCount.toLocaleString()}{' '}
+                          {resultCountMeta.unit}
                         </span>
-                      ) : (
-                        <>
-                          {totalSources > 0 && useFluidSearch && (
-                            <span className='ml-2 text-sm font-normal text-gray-500 dark:text-gray-400'>
-                              {completedSources}/{totalSources}
-                            </span>
-                          )}
-                          {isLoading && useFluidSearch && (
-                            <span className='ml-2 inline-block align-middle'>
-                              <span className='inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-green-500'></span>
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </h2>
+                        {resultCountMeta.isFiltered && (
+                          <span className='inline-flex items-center rounded-full bg-white/80 px-2.5 py-1 font-medium text-gray-500 ring-1 ring-gray-200 dark:bg-gray-900/70 dark:text-gray-400 dark:ring-gray-700'>
+                            筛选前{' '}
+                            {resultCountMeta.totalCount.toLocaleString()}{' '}
+                            {resultCountMeta.unit}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                     {searchQuery && (
                       <button
                         onClick={() => {
@@ -1756,6 +1851,7 @@ function SearchPageClient() {
                                   <VideoCard
                                     ref={getGroupRef(mapKey)}
                                     from='search'
+                                    onBeforeNavigate={savePartialCacheForPlayback}
                                     isAggregate={true}
                                     title={title}
                                     poster={poster}
@@ -1805,6 +1901,7 @@ function SearchPageClient() {
                                 >
                                   <VideoCard
                                     id={item.id}
+                                    onBeforeNavigate={savePartialCacheForPlayback}
                                     title={item.title}
                                     poster={item.poster}
                                     episodes={item.episodes.length}
